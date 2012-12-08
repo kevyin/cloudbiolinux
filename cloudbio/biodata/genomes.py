@@ -9,6 +9,8 @@ The main targets are fabric functions:
   - install_data -- Install biological data from scratch, including indexing genomes.
   - install_data_s3 -- Install biological data, downloading pre-computed indexes from S3.
   - upload_s3 -- Upload created indexes to biodata S3 bucket.
+  - build_index -- Just index a genome and add galaxy loc file entries
+
 
 """
 import os
@@ -46,6 +48,11 @@ class _DownloadHelper:
         """Check if a file exists in either download or final destination.
         """
         return exists(fname) or exists(os.path.join(seq_dir, fname))
+
+class GenericGenome():
+    def __init__(self, genome_name):
+        self._name = genome_name
+
 
 class UCSCGenome(_DownloadHelper):
     def __init__(self, genome_name):
@@ -252,6 +259,15 @@ def install_data_s3(config_source):
     _download_genomes(genomes, genome_indexes)
     _install_additional_data(genomes, genome_indexes, config)
 
+def build_index(config_source):
+    """Build indices from a genome's fasta
+       and add galaxy loc file entries
+    """
+    genomes, genome_indexes, config = _parse_genomes_to_build(config_source)
+    genome_indexes += DEFAULT_GENOME_INDEXES
+    _data_genomes_to_build(genomes, genome_indexes)
+
+
 def upload_s3(config_source):
     """Upload prepared genome files by identifier to Amazon s3 buckets.
     """
@@ -296,6 +312,25 @@ def _get_genomes(config_source):
                 break
         assert ginfo is not None, "Did not find download info for %s" % g["dbkey"]
         name, gid, manager = ginfo
+        manager.config = g
+        genomes.append((name, gid, manager))
+    indexes = config["genome_indexes"] or []
+    return genomes, indexes, config
+
+def _parse_genomes_to_build(config_source):
+    if isinstance(config_source, dict):
+        config = config_source
+    else:
+        if yaml is None:
+            raise ImportError("install yaml to read configuration from %s" % config_source)
+        with open(config_source) as in_handle:
+            config = yaml.load(in_handle)
+    genomes = []
+    genomes_config = config["genomes_to_build"] or []
+    env.logger.info("List of genomes (from the config file at '{0}'): {1}"\
+        .format(config_source, ', '.join(g['name'] for g in genomes_config)))
+    for g in genomes_config:
+        name, gid, manager = (g["organism"], g['dbkey'], GenericGenome(g["dbkey"]))
         manager.config = g
         genomes.append((name, gid, manager))
     indexes = config["genome_indexes"] or []
@@ -355,6 +390,21 @@ def _data_ngs_genomes(genomes, genome_indexes):
             ref_file = _move_seq_files(ref_file, base_zips, seq_dir)
         cur_indexes = manager.config.get("indexes", genome_indexes)
         _index_to_galaxy(cur_dir, ref_file, genome, cur_indexes, manager.config)
+
+def _data_genomes_to_build(genomes, genome_indexes):
+    """create index files for next generation genomes.
+    """
+    genome_dir = _make_genome_dir()
+    for organism, genome, manager in genomes:
+        cur_dir = os.path.join(genome_dir, organism, genome)
+        env.logger.info("Processing genome {0} and putting it to {1}"\
+            .format(organism, cur_dir))
+        if not exists(cur_dir):
+            run('mkdir -p %s' % cur_dir)
+        ref_file = manager.config["genome_fasta"]
+        cur_indexes = manager.config.get("indexes", genome_indexes)
+        _index_to_galaxy(cur_dir, ref_file, genome, cur_indexes, manager.config)
+
 
 def _index_to_galaxy(work_dir, ref_file, gid, genome_indexes, config):
     """Index sequence files and update associated Galaxy loc files.

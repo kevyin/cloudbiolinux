@@ -45,6 +45,16 @@ genomes:
 #    base: GRCh37
 #    mask: https://s3.amazonaws.com/chapmanb/xprize/GRCh37-NA12878-xprize-fosmid.bed
 
+#genomes_to_build:
+    # Indexes will be placed in the data_files folder using the usual folder structure
+    # <data_files>/genomes/<organism>/<dbkey>/
+    # Make sure to place the fasta in the expected ..<dbley>/seq/ directory or create a link
+  #- dbkey: hg19
+    #name: Human (hg19)
+    #organism: Hsapiens
+    #genome_fasta: galaxy_biodata/genomes/Hsapiens/hg19/seq/hg19.fa
+    
+
 # Global set of indexes to include for each genome.
 # Available choices are in GENOMES_INDEXES_SUPPORTED in data_fabfile.py
 genome_indexes:

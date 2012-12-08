@@ -66,6 +66,11 @@ def install_data_s3(config_source=CONFIG_FILE, do_setup_environment=True):
     setup_environment()
     genomes.install_data_s3(config_source)
 
+def build_index(config_source):
+    setup_environment()
+    genomes.build_index(config_source)
+
+
 def upload_s3(config_source=CONFIG_FILE):
     """Upload prepared genome files by identifier to Amazon s3 buckets.
     """

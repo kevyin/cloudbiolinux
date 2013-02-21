@@ -80,7 +80,7 @@ def _make_tmp_dir():
 
 # -- Standard build utility simplifiers
 
-def _get_expected_file(url):
+def _get_expected_file(url, dir_name=None):
     tar_file = os.path.split(url.split("?")[0])[-1]
     safe_tar = "--pax-option='delete=SCHILY.*,delete=LIBARCHIVE.*'"
     exts = {(".tar.gz", ".tgz") : "tar %s -xzpf" % safe_tar,
@@ -90,7 +90,9 @@ def _get_expected_file(url):
     for ext_choices, tar_cmd in exts.iteritems():
         for ext in ext_choices:
             if tar_file.endswith(ext):
-                return tar_file, tar_file[:-len(ext)], tar_cmd
+                if dir_name is None:
+                    dir_name = tar_file[:-len(ext)]
+                return tar_file, dir_name, tar_cmd
     raise ValueError("Did not find extract command for %s" % url)
 
 def _safe_dir_name(dir_name, need_dir=True):
@@ -113,7 +115,7 @@ def _safe_dir_name(dir_name, need_dir=True):
     if need_dir:
         raise ValueError("Could not find directory %s" % dir_name)
 
-def _fetch_and_unpack(url, need_dir=True):
+def _fetch_and_unpack(url, need_dir=True, dir_name=None):
     if url.startswith(("git", "svn", "hg", "cvs")):
         base = os.path.splitext(os.path.basename(url.split()[-1]))[0]
         if exists(base):
@@ -121,7 +123,7 @@ def _fetch_and_unpack(url, need_dir=True):
         run(url)
         return base
     else:
-        tar_file, dir_name, tar_cmd = _get_expected_file(url)
+        tar_file, dir_name, tar_cmd = _get_expected_file(url, dir_name)
         if not exists(tar_file):
             run("wget --no-check-certificate -O %s '%s'" % (tar_file, url))
         run("%s %s" % (tar_cmd, tar_file))
@@ -170,7 +172,7 @@ def _get_install_local(url, env, make_command, dir_name=None,
     if not exists(test1) and not exists(test2):
         with _make_tmp_dir() as work_dir:
             with cd(work_dir):
-                dir_name = _fetch_and_unpack(url)
+                dir_name = _fetch_and_unpack(url, dir_name=dir_name)
                 if not exists(os.path.join(env.local_install, dir_name)):
                     with cd(dir_name):
                         if post_unpack_fn:
@@ -208,26 +210,22 @@ def _pip_cmd(env):
     """
     if env.has_key("pip_cmd") and env.pip_cmd:
         return env.pip_cmd
+    elif not env.use_sudo:
+        return os.path.join(env.system_install, "bin", "pip")
     elif env.has_key("python_version_ext") and env.python_version_ext:
         return "pip-{0}".format(env.python_version_ext)
     else:
         return "pip"
 
 def _python_make(env):
-    run("python%s setup.py build" % env.python_version_ext)
-    # handle standard Ubuntu case: only specify a prefix if we're not
-    # in the standard system directory
-    if env.system_install in ["/usr"]:
-        prefix = ""
-    else:
-        prefix = "--prefix '%s'" % env.system_install
-    env.safe_sudo("python%s setup.py install --skip-build %s" % (env.python_version_ext, prefix))
+    env.safe_sudo("%s install --upgrade `pwd`" % _pip_cmd(env))
     for clean in ["dist", "build", "lib/*.egg-info"]:
         env.safe_sudo("rm -rf %s" % clean)
 
-
 def _get_installed_file(env, local_file):
-    path = os.path.join('installed_files', local_file)
+    installed_files_dir = \
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "installed_files")
+    path = os.path.join(installed_files_dir, local_file)
     if not os.path.exists(path):
         # If using cloudbiolinux as a library, this won't be available,
         # download the file from github instead
@@ -314,7 +312,22 @@ def _setup_simple_service(service_name):
     sudo("ln -f -s /etc/init.d/%s /etc/rc6.d/K01%s" % (service_name, service_name))
 
 
-def _render_config_file_temlate(env, name, defaults={}, overrides={}, default_source=None):
+def _render_config_file_template(env, name, defaults={}, overrides={}, default_source=None):
+    """
+    If ``name` is say ``nginx.conf``, check fabric environment for
+    ``nginx_conf_path`` and then ``nginx_conf_template_path``. If
+    ``nginx_conf_path`` is set, return the contents of that file. If
+    nginx_conf_template_path is set, return the contents of that file
+    but with variable interpolation performed. Variable interpolation
+    is performed using a derivative of the fabric environment defined
+    using the supplied ``defaults`` and ``overrides`` using the
+    ``_extend_env`` function below.
+
+    Finally, if neither ``nginx_conf_path`` or
+    ``nginx_conf_template_path`` are set, check the
+    ``installed_files`` directory for ``nginx.conf`` and finally
+    ``nginx.conf.template``.
+    """
     param_prefix = name.replace(".", "_")
     # Deployer can specify absolute path for config file, check this first
     path_key_name = "%s_path" % param_prefix
@@ -343,6 +356,11 @@ def _render_config_file_temlate(env, name, defaults={}, overrides={}, default_so
 
 
 def _extend_env(env, defaults={}, overrides={}):
+    """
+    Create a new ``dict`` from fabric's ``env``, first adding defaults
+    specified via ``defaults`` (if available). Finally, override
+    anything in env, with values specified by ``overrides``.
+    """
     new_env = {}
     for key, value in defaults.iteritems():
         new_env[key] = value
@@ -354,5 +372,70 @@ def _extend_env(env, defaults={}, overrides={}):
 
 
 def _setup_conf_file(env, dest, name, defaults={}, overrides={}, default_source=None):
-    conf_file_contents = _render_config_file_temlate(env, name, defaults, overrides, default_source)
+    conf_file_contents = _render_config_file_template(env, name, defaults, overrides, default_source)
     _write_to_file(conf_file_contents, dest, mode=0755)
+
+
+def _add_to_profiles(line, profiles=[], use_sudo=True):
+    """
+    If it's not already there, append ``line`` to shell profiles files.
+    By default, these are ``/etc/profile`` and ``/etc/bash.bashrc`` but can be
+    overridden by providing a list of file paths to the ``profiles`` argument.
+    """
+    if not profiles:
+        profiles = ['/etc/bash.bashrc', '/etc/profile']
+    for profile in profiles:
+        if not contains(profile, line):
+            append(profile, line, use_sudo=use_sudo)
+
+
+def install_venvburrito():
+    """
+    If not already installed, install virtualenv-burrito
+    (https://github.com/brainsik/virtualenv-burrito) as a convenient
+    method for installing and managing Python virtualenvs.
+    """
+    url = "https://raw.github.com/brainsik/virtualenv-burrito/master/virtualenv-burrito.sh"
+    if not exists("$HOME/.venvburrito/startup.sh"):
+        run("curl -s {0} | $SHELL".format(url))
+        # Add the startup script into the ubuntu user's bashrc
+        _add_to_profiles(". $HOME/.venvburrito/startup.sh", ['/home/ubuntu/.bashrc'], use_sudo=False)
+
+
+def _create_python_virtualenv(env, venv_name, reqs_file=None, reqs_url=None):
+    """
+    Using virtual-burrito, create a new Python virtualenv named ``venv_name``.
+    Do so only if the virtualenv of the given name does not already exist.
+    virtual-burrito installs virtualenvs in ``$HOME/.virtualenvs``.
+
+    By default, an empty virtualenv is created. Python libraries can be
+    installed into the virutalenv at the time of creation by providing a path
+    to the requirements.txt file (``reqs_file``). Instead of providing the file,
+    a url to the file can be provided via ``reqs_url``, in which case the
+    requirements file will first be downloaded. Note that if the ``reqs_url``
+    is provided, the downloaded file will take precedence over ``reqs_file``.
+    """
+    # First make sure virtualenv-burrito is installed
+    install_venvburrito()
+    activate_vburrito = ". $HOME/.venvburrito/startup.sh"
+    if venv_name in run("{0}; lsvirtualenv | grep {1} || true"
+        .format(activate_vburrito, venv_name)):
+        env.logger.info("Virtualenv {0} already exists".format(venv_name))
+    else:
+        with _make_tmp_dir():
+            if reqs_file or reqs_url:
+                if not reqs_file:
+                    # This mean the url only is provided so 'standardize ' the file name
+                    reqs_file = 'requirements.txt'
+                cmd = "mkvirtualenv -r {0} {1}".format(reqs_file, venv_name)
+            else:
+                cmd = "mkvirtualenv {0}".format(venv_name)
+            if reqs_url:
+                run("wget --output-document=%s %s" % (reqs_file, reqs_url))
+            run("{0}; {1}".format(activate_vburrito, cmd))
+            env.logger.info("Finished installing virtualenv {0}".format(venv_name))
+
+
+def _read_boolean(env, name, default):
+    property_str = env.get(name, str(default))
+    return property_str.upper() in ["TRUE", "YES"]

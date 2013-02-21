@@ -10,12 +10,23 @@ packages:
   - bio_nextgen
   - distributed
 libraries:
-  - python-libs
 custom_ignore:
-  - fastx_toolkit
-  - varianttools
-  - tophat
-  - cufflinks
+  - bfast
+  - gmap
+  - lastz
   - mosaik
   - perm
+  - snap
+  - stacks
+  - fastx_toolkit
+  - varianttools
+  - vep
+  - abyss
+  - ray
+  - transabyss
+  - trinity
+  - velvet
   - pydoop
+  - seal
+  - bx-python
+  - rpy

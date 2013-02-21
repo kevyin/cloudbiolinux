@@ -16,7 +16,8 @@ def _yum_packages(to_install):
     pkg_config = get_config_file(env, package_file).base
     with settings(warn_only=True):
         sudo("yum check-update")
-    sudo("yum -y upgrade")
+    if env.edition.short_name not in ["minimal"]:
+        sudo("yum -y upgrade")
     # Retrieve packages to get and install each of them
     (packages, _) = _yaml_to_packages(pkg_config, to_install)
     # At this point allow the Flavor to rewrite the package list
@@ -39,7 +40,7 @@ def _setup_yum_sources():
     """Add additional useful yum repositories.
     """
     repos = [
-      "http://dl.fedoraproject.org/pub/epel/6/x86_64/epel-release-6-7.noarch.rpm",
+      "http://dl.fedoraproject.org/pub/epel/6/x86_64/epel-release-6-8.noarch.rpm",
       "http://archive.cloudera.com/redhat/6/x86_64/cdh/cdh3-repository-1.0-1.noarch.rpm"
     ]
     for repo in repos:

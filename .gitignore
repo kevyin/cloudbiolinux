@@ -6,3 +6,9 @@ dist/
 *.pem
 dpkg.lst
 *.log
+venv/
+deploy/build
+deploy/keys
+deploy/settings.yaml
+deploy/.venv-deploy
+deploy/.vagrant

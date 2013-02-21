@@ -51,6 +51,35 @@ minimal:
   network:
     - curl
     - wget
+libraries:
+  - libatlas-base-dev
+  #- libatlas-dev
+  - libblas-dev
+  - liblapack-dev
+  - libeigen3-dev
+  - libc6-dev
+  - libzip-dev
+  - libbz2-dev
+  - zlib1g-dev
+  - libcurl4-openssl-dev
+  - libgsl0-dev
+  - libgsl0ldbl
+  - gsl-bin
+  - mime-support
+  - libncurses5-dev
+  - libpcre3-dev
+  - libpng12-dev
+  - libreadline-dev
+  - libssl-dev
+  - uuid
+  - uuid-dev
+  - libxml2
+  - libxml2-dev
+  - libxslt1-dev
+  - libxslt1.1
+  - xz-utils
+  - liblzma-dev
+  - zlib1g-dev
 desktop:
   #Packages to support a remote desktop
   all:
@@ -90,33 +119,12 @@ programming:
     - texlive-latex-recommended
     - texlive-latex-extra
   build:
-    - swig
-    - cmake
-    - libcurl4-openssl-dev
-    - libxml2
-    - libxml2-dev
-    - libxslt1-dev
-    - libxslt1.1
-    - libgsl0-dev
-    - libgsl0ldbl
-    - gsl-bin
     - xfsprogs
-    - libc6-dev
-    - libzip-dev
-    - libbz2-dev
-    - zlib1g-dev
-    - xz-utils
-    - liblzma-dev
+    - stow
+    - rsync
+    - python-software-properties
+    - protobuf-compiler
     - libgtk2.0-dev
-    - libncurses5-dev
-    - zlib1g-dev
-    - libssl-dev
-    - libpcre3-dev
-    - libreadline-dev
-    - mime-support
-    - gcc
-    - g++
-    - gfortran
     - stow
     - rsync
     - python-software-properties
@@ -125,11 +133,6 @@ programming:
     - libfuse-dev
     - fuse-utils
   libraries:
-    - libatlas-base-dev
-    #- libatlas-dev
-    - libblas-dev
-    - liblapack-dev
-    - libeigen3-dev
     - tcl-dev
     - tk-dev
     - imagemagick
@@ -182,12 +185,6 @@ distributed:
     - rabbitmq-server
     - nfs-kernel-server
     - nfs-common
-    - hadoop-0.20
-    - hadoop-pig
-    - hadoop-hive
-    - libhdfs0-dev
-    - hadoop-0.20-pipes
-    - hadoop-0.20-source
     - libopenmpi-dev
     - openmpi-bin
     - libzmq-dev
@@ -197,6 +194,13 @@ distributed:
     - libmpich2-3
     - libmpich2-dev
     - mpich2
+hadoop:
+  - hadoop-0.20
+  - hadoop-pig
+  - hadoop-hive
+  - libhdfs0-dev
+  - hadoop-0.20-pipes
+  - hadoop-0.20-source
 amazon:
   - s3cmd
   - euca2ools
@@ -242,7 +246,7 @@ java:
   - ant
   - libbiojava-java
   - libbiojava-java-demos
-  - eclipse
+  #- eclipse
   - maven2
   - libjline-java
   - libjhdf5-java
@@ -396,6 +400,25 @@ bio_microarray:
 bio_visualization:
   - rasmol
   # - bio-linux-clcsequenceviewer # Awaiting fix
+bio_proteomics:
+  # Needed for TPP
+  - xsltproc
+  - libxml-sax-expat-perl
+  - libgd2-xpm-dev
+  - libbz2-dev
+  # Needed for percolator
+  - libxerces-c3.1
+  - libxerces-c-dev
+  - xsdcxx
+  - libboost-dev
+  - libboost-filesystem-dev
+  - libboost-system-dev
+  - libsqlite3-0
+  - libboost-serialization-dev
+  - zlib1g-dev
+  - libboost-dev
+bio_proteomics_wine:
+  - wine
 bio_utils:
   - bio-linux-genquery
   - bio-linux-keyring
@@ -444,8 +467,8 @@ cloudman:
     - rabbitmq-server
     # Required to handle data volumes (including LVM support)
     - lvm2
-    - dmsetup 
-    - mdadm
+    - dmsetup
+    # - mdadm
     - reiserfsprogs
     - xfsprogs
     # Required to compile nginx
@@ -471,11 +494,16 @@ cloudman:
     - libreadline6-dev
     # Required for s3fs
     - libfuse-dev
-    - pkg-config
+    - libfuse2
     - fuse-utils
+    - pkg-config
     - libcurl4-openssl-dev
     - libxml2-dev
-    - mime-support    
+    - mime-support
+    # Required to get HTCondor
+    - condor
+    # Required for novnc
+    - vnc4server
 galaxy:
   all:
     - postgresql
@@ -509,6 +537,40 @@ galaxy:
     - pdfjam
     - python-scipy
     - libsparsehash-dev
+galaxyp:
+  all:
+     # Required for protk
+     - libxml2-dev
+     - libreadline-dev
+     # Required for protvis
+     - python-virtualenv
+     - python-setuptools
+     - libpng12-dev
+     - python-dev
+     - libexpat1-dev
+     - libboost-dev
+
+     # Needed for TPP
+     - xsltproc
+     - libxml-sax-expat-perl
+     - libgd2-xpm-dev
+     - libbz2-dev
+
+     # Needed for percolator
+     - libxerces-c3.1
+     - libxerces-c-dev
+     - xsdcxx
+     - libboost-dev
+     - libboost-filesystem-dev
+     - libboost-system-dev
+     - libsqlite3-0
+     - libboost-serialization-dev
+     - zlib1g-dev
+     - libboost-dev
+
+     # Needed for nbic galaxy stuff
+     - liblog-log4perl-perl
+     - libswiss-perl
 
 # To do -- in Deb Med but not propogated
 # squizz
@@ -532,3 +594,4 @@ galaxy:
 #   blast2go
 #   sputnik: microsattelites
 #   GenomeView
+

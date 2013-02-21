@@ -3,7 +3,8 @@ import yaml
 
 from cloudbio.custom.bio_general import *
 from cloudbio.custom.bio_nextgen import *
-from cloudbio.custom.shared import _set_default_config
+from cloudbio.custom.bio_proteomics import *
+from cloudbio.custom.shared import _set_default_config, _add_to_profiles
 from cloudbio.galaxy.applications import *
 from cloudbio.galaxy.r import _install_r_packages
 from cloudbio.galaxy.utils import _chown_galaxy, _read_boolean
@@ -25,6 +26,8 @@ def _install_tools(env, tools_conf=None):
        # Need to ensure the install dir exists and is owned by env.galaxy_user
         _setup_install_dir(env)
         _install_applications(env, tools_conf)
+        _chown_galaxy(env, env.galaxy_tools_dir)
+        _chown_galaxy(env, env.galaxy_jars_dir)
 
     if _read_boolean(env, "galaxy_install_r_packages", False):
         _install_r_packages(tools_conf)
@@ -44,6 +47,14 @@ def _setup_install_dir(env):
     if not exists(env.galaxy_tools_dir):
         sudo("mkdir -p %s" % env.galaxy_tools_dir)
         _chown_galaxy(env, env.galaxy_tools_dir)
+    # Create a general-purpose ``bin`` directory under the galaxy_tools_dir
+    # and put it on the PATH so users can more easily add custom tools
+    bin_dir = os.path.join(env.galaxy_tools_dir, 'bin')
+    if not exists(bin_dir):
+        sudo("mkdir -p %s" % bin_dir)
+        _chown_galaxy(env, bin_dir)
+        line = "export PATH={0}:$PATH".format(bin_dir)
+        _add_to_profiles(line)
     if not exists(env.galaxy_jars_dir):
         sudo("mkdir -p %s" % env.galaxy_jars_dir)
         _chown_galaxy(env, env.galaxy_jars_dir)
@@ -114,4 +125,5 @@ def _install_galaxy_config(tool_env, bin_dirs):
         # Standard bin install, just add it to path
         sudo("echo 'PATH=%s:$PATH' > %s/env.sh" % (path_addtion, install_dir))
         sudo("chmod +x %s/env.sh" % install_dir)
+
     _set_default_config(tool_env, install_dir)

@@ -26,11 +26,12 @@ libraries:
   - freetype-devel
   - gsl-devel
   - libpng-devel
+  - openssl-devel
+  - ncurses-devel
 programming:
   - protobuf-c
   - protobuf-compiler
   - protobuf-python
-  - openssl-devel
 java:
   - ant
   - ant-junit
@@ -43,6 +44,7 @@ python:
   - python-devel
   - boost-python-devel
   - numpy
+  - python-pip
 r:
   - R
   - R-core

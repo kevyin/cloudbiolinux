@@ -29,15 +29,16 @@ for to_remove in [p for p in sys.path if p.find("cloudbiolinux-") > 0]:
 sys.path.append(os.path.dirname(__file__))
 import cloudbio
 
+from cloudbio import libraries
 from cloudbio.utils import _setup_logging, _update_biolinux_log, _configure_fabric_environment
 from cloudbio.cloudman import _cleanup_ec2
 from cloudbio.cloudbiolinux import _cleanup_space
 from cloudbio.custom.shared import _make_tmp_dir, _pip_cmd
 from cloudbio.package.shared import _yaml_to_packages
-from cloudbio.package import _configure_and_install_native_packages
+from cloudbio.package import (_configure_and_install_native_packages,
+                              _connect_native_packages)
 from cloudbio.package.nix import _setup_nix_sources, _nix_packages
 from cloudbio.flavor.config import get_config_file
-
 
 # ### Shared installation targets for all platforms
 
@@ -64,11 +65,26 @@ def install_biolinux(target=None, flavor=None):
     _check_fabric_version()
     _configure_fabric_environment(env, flavor)
     env.logger.debug("Target is '%s'" % target)
+    _perform_install(target, flavor)
+    _print_time_stats("Config", "end", time_start)
+
+
+def _perform_install(target=None, flavor=None):
+    """
+    Once CBL/fabric environment is setup, this method actually
+    runs the required installation procedures.
+
+    See `install_biolinux` for full details on arguments
+    `target` and `flavor`.
+    """
     pkg_install, lib_install, custom_ignore = _read_main_config()
     if target is None or target == "packages":
-        _configure_and_install_native_packages(env, pkg_install)
-
-        if env.nixpkgs: # ./doc/nixpkgs.md
+        # can only install native packages if we have sudo access.
+        if env.use_sudo:
+            _configure_and_install_native_packages(env, pkg_install)
+        else:
+            _connect_native_packages(env, pkg_install)
+        if env.nixpkgs:  # ./doc/nixpkgs.md
             _setup_nix_sources()
             _nix_packages(pkg_install)
         _update_biolinux_log(env, target, flavor)
@@ -83,9 +99,15 @@ def install_biolinux(target=None, flavor=None):
         _cleanup_space(env)
         if env.has_key("is_ec2_image") and env.is_ec2_image.upper() in ["TRUE", "YES"]:
             if env.distribution in ["ubuntu"]:
-                sudo("apt-get install cloud-init")
+                # For the time being (Dec 2012), must install development version
+                # of cloud-init because of a boto & cloud-init bug:
+                # https://bugs.launchpad.net/cloud-init/+bug/1068801
+                sudo('wget --output-document=cloud-init_0.7.1-0ubuntu4_all.deb ' +
+                    'https://launchpad.net/ubuntu/+archive/primary/+files/cloud-init_0.7.1-0ubuntu4_all.deb')
+                sudo("dpkg -i cloud-init_0.7.1-0ubuntu4_all.deb")
+                sudo("rm -f cloud-init_0.7.1-0ubuntu4_all.deb")
             _cleanup_ec2(env)
-    _print_time_stats("Config", "end", time_start)
+
 
 def _print_time_stats(action, event, prev_time=None):
     """ A convenience method for displaying time event during configuration.
@@ -127,25 +149,29 @@ def _custom_installs(to_install, ignore=None):
         install_custom(p, True, pkg_to_group)
 
 def install_custom(p, automated=False, pkg_to_group=None, flavor=None):
-    """Install a single custom package by name.
-    This method fetches names from custom.yaml that delegate to a method
-    in the custom/name.py program. Alternatively, if a program install method is
-    defined in approapriate package, it will be called directly (see param p).
+    """
+    Install a single custom program or package by name.
+
+    This method fetches program name from ``config/custom.yaml`` and delegates
+    to a method in ``custom/*name*.py`` to proceed with the installation.
+    Alternatively, if a program install method is defined in the appropriate
+    package, it will be called directly (see param ``p``).
 
     Usage: fab [-i key] [-u user] -H host install_custom:program_name
 
     :type p:  string
-    :param p: A name of a custom program to install. This has to be either a name
-              that is listed in custom.yaml as a subordinate to a group name or a
-              program name whose install method is defined in either cloudbio or
-              custom packages (eg, install_cloudman).
+    :param p: A name of the custom program to install. This has to be either a name
+              that is listed in ``custom.yaml`` as a subordinate to a group name or a
+              program name whose install method is defined in either ``cloudbio`` or
+              ``custom`` packages
+              (e.g., ``cloudbio/custom/cloudman.py -> install_cloudman``).
 
     :type automated:  bool
     :param automated: If set to True, the environment is not loaded and reading of
-                      the custom.yaml is skipped.
+                      the ``custom.yaml`` is skipped.
     """
     _setup_logging(env)
-    p = p.lower() # All packages are listed in custom.yaml are in lower case
+    p = p.lower() # All packages listed in custom.yaml are in lower case
     time_start = _print_time_stats("Custom install for '{0}'".format(p), "start")
     if not automated:
         _configure_fabric_environment(env, flavor)
@@ -193,53 +219,6 @@ def _read_main_config():
 
 # ### Library specific installation code
 
-def _r_library_installer(config):
-    """Install R libraries using CRAN and Bioconductor.
-    """
-    # Create an Rscript file with install details.
-    out_file = "install_packages.R"
-    if exists(out_file):
-        run("rm -f %s" % out_file)
-    run("touch %s" % out_file)
-    repo_info = """
-    cran.repos <- getOption("repos")
-    cran.repos["CRAN" ] <- "%s"
-    options(repos=cran.repos)
-    source("%s")
-    """ % (config["cranrepo"], config["biocrepo"])
-    append(out_file, repo_info)
-    install_fn = """
-    repo.installer <- function(repos, install.fn) {
-      update.or.install <- function(pname) {
-        if (pname %in% installed.packages())
-          update.packages(lib.loc=c(pname), repos=repos, ask=FALSE)
-        else
-          install.fn(pname)
-      }
-    }
-    """
-    append(out_file, install_fn)
-    std_install = """
-    std.pkgs <- c(%s)
-    std.installer = repo.installer(cran.repos, install.packages)
-    lapply(std.pkgs, std.installer)
-    """ % (", ".join('"%s"' % p for p in config['cran']))
-    append(out_file, std_install)
-    bioc_install = """
-    bioc.pkgs <- c(%s)
-    bioc.installer = repo.installer(biocinstallRepos(), biocLite)
-    lapply(bioc.pkgs, bioc.installer)
-    """ % (", ".join('"%s"' % p for p in config['bioc']))
-    append(out_file, bioc_install)
-    final_update = """
-    update.packages(repos=biocinstallRepos(), ask=FALSE)
-    update.packages(ask=FALSE)
-    """
-    append(out_file, final_update)
-    # run the script and then get rid of it
-    env.safe_sudo("Rscript %s" % out_file)
-    run("rm -f %s" % out_file)
-
 def _python_library_installer(config):
     """Install python specific libraries using easy_install.
     """
@@ -283,12 +262,6 @@ def _perl_library_installer(config):
         # http://agiletesting.blogspot.com/2010/03/getting-past-hung-remote-processes-in.html
         run("cpanm %s --skip-installed --notest %s < /dev/null" % (sudo_str, lib))
 
-def _clojure_library_installer(config):
-    """Install clojure libraries using cljr.
-    """
-    for lib in config['cljr']:
-        run("cljr install %s" % lib)
-
 def _haskell_library_installer(config):
     """Install haskell libraries using cabal.
     """
@@ -298,11 +271,10 @@ def _haskell_library_installer(config):
         run("cabal install %s --global %s" % (sudo_str, lib))
 
 lib_installers = {
-    "r-libs" : _r_library_installer,
+    "r-libs" : libraries.r_library_installer,
     "python-libs" : _python_library_installer,
     "ruby-libs" : _ruby_library_installer,
     "perl-libs" : _perl_library_installer,
-    "clojure-libs": _clojure_library_installer,
     "haskell-libs": _haskell_library_installer,
     }
 

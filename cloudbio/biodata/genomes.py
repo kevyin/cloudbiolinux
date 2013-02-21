@@ -18,7 +18,6 @@ import operator
 import socket
 import subprocess
 from contextlib import contextmanager
-from xml.etree import ElementTree
 
 from fabric.api import *
 from fabric.contrib.files import *
@@ -32,6 +31,7 @@ try:
 except ImportError:
     boto = None
 
+from cloudbio.biodata import galaxy
 from cloudbio.biodata.dbsnp import download_dbsnp
 from cloudbio.biodata.rnaseq import download_transcripts
 
@@ -112,11 +112,12 @@ class UCSCGenome(_DownloadHelper):
 class NCBIRest(_DownloadHelper):
     """Retrieve files using the TogoWS REST server pointed at NCBI.
     """
-    def __init__(self, name, refs):
+    def __init__(self, name, refs, dl_name=None):
         _DownloadHelper.__init__(self)
         self.data_source = "NCBI"
         self._name = name
         self._refs = refs
+        self.dl_name = dl_name if dl_name is not None else name
         self._base_url = "http://togows.dbcls.jp/entry/ncbi-nucleotide/%s.fasta"
 
     def download(self, seq_dir):
@@ -125,10 +126,7 @@ class NCBIRest(_DownloadHelper):
             for ref in self._refs:
                 run("wget %s" % (self._base_url % ref))
                 run("ls -l")
-                run("sed -rie .bak '/1/ s/^>.*$/>%s/g' %s.fasta" % (ref,
-                    ref))
-                # sed in Fabric does not cd properly?
-                #sed('%s.fasta' % ref, '^>.*$', '>%s' % ref, '1')
+                sed('%s.fasta' % ref, '^>.*$', '>%s' % ref, '1')
             tmp_file = genome_file.replace(".fa", ".txt")
             run("cat *.fasta > %s" % tmp_file)
             run("rm -f *.fasta")
@@ -193,12 +191,13 @@ class BroadGenome(_DownloadHelper):
             run("mv %s %s" % (self._target, org_file))
         return org_file, []
 
-BROAD_BUNDLE_VERSION = "1.5"
-DBSNP_VERSION = "135"
+BROAD_BUNDLE_VERSION = "2.3"
+DBSNP_VERSION = "137"
 
 GENOMES_SUPPORTED = [
            ("phiX174", "phix", NCBIRest("phix", ["NC_001422.1"])),
            ("Scerevisiae", "sacCer2", UCSCGenome("sacCer2")),
+           ("Mmusculus", "mm10", UCSCGenome("mm10")),
            ("Mmusculus", "mm9", UCSCGenome("mm9")),
            ("Mmusculus", "mm8", UCSCGenome("mm8")),
            ("Hsapiens", "hg18", BroadGenome("hg18", BROAD_BUNDLE_VERSION,
@@ -207,6 +206,7 @@ GENOMES_SUPPORTED = [
                                             "ucsc.hg19.fasta")),
            ("Hsapiens", "GRCh37", BroadGenome("GRCh37", BROAD_BUNDLE_VERSION,
                                               "human_g1k_v37.fasta", "b37")),
+           ("Rnorvegicus", "rn5", UCSCGenome("rn5")),
            ("Rnorvegicus", "rn4", UCSCGenome("rn4")),
            ("Xtropicalis", "xenTro2", UCSCGenome("xenTro2")),
            ("Athaliana", "araTha_tair9", EnsemblGenome("plants", "6", "",
@@ -220,6 +220,7 @@ GENOMES_SUPPORTED = [
            ("Paeruginosa_UCBPP-PA14", "386", NCBIRest("386", ["CP000438.1"])),
            ("Ecoli", "eschColi_K12", NCBIRest("eschColi_K12", ["U00096.2"])),
            ("Amellifera_Honeybee", "apiMel3", UCSCGenome("apiMel3")),
+           ("Cfamiliaris_Dog", "canFam3", UCSCGenome("canFam3")),
            ("Cfamiliaris_Dog", "canFam2", UCSCGenome("canFam2")),
            ("Drerio_Zebrafish", "danRer6", UCSCGenome("danRer6")),
            ("Ecaballus_Horse", "equCab2", UCSCGenome("equCab2")),
@@ -230,7 +231,7 @@ GENOMES_SUPPORTED = [
 
 GENOME_INDEXES_SUPPORTED = ["bowtie", "bowtie2", "bwa", "maq", "novoalign", "novoalign-cs",
                             "ucsc", "mosaik", "eland", "bfast", "arachne"]
-DEFAULT_GENOME_INDEXES = ["seq"]
+DEFAULT_GENOME_INDEXES = ["ucsc", "seq"]
 
 # -- Fabric instructions
 
@@ -246,7 +247,7 @@ def install_data(config_source):
     # Append a potentially custom system install path to PATH so tools are found
     with path(os.path.join(env.system_install, 'bin')):
         genomes, genome_indexes, config = _get_genomes(config_source)
-        genome_indexes += DEFAULT_GENOME_INDEXES
+        genome_indexes += [x for x in DEFAULT_GENOME_INDEXES if x not in genome_indexes]
         _data_ngs_genomes(genomes, genome_indexes)
         _install_additional_data(genomes, genome_indexes, config)
 
@@ -255,18 +256,18 @@ def install_data_s3(config_source):
     """
     _check_version()
     genomes, genome_indexes, config = _get_genomes(config_source)
-    genome_indexes += DEFAULT_GENOME_INDEXES
+    genome_indexes += [x for x in DEFAULT_GENOME_INDEXES if x not in genome_indexes]
     _download_genomes(genomes, genome_indexes)
     _install_additional_data(genomes, genome_indexes, config)
 
-def build_index(config_source):
-    """Build indices from a genome's fasta
-       and add galaxy loc file entries
+def install_data_rsync(config_source):
+    """Install data using pre-existing genomes from Galaxy rsync servers.
     """
-    genomes, genome_indexes, config = _parse_genomes_to_build(config_source)
-    genome_indexes += DEFAULT_GENOME_INDEXES
-    _data_genomes_to_build(genomes, genome_indexes)
-
+    _check_version()
+    genomes, genome_indexes, config = _get_genomes(config_source)
+    genome_indexes += [x for x in DEFAULT_GENOME_INDEXES if x not in genome_indexes]
+    genome_dir = _make_genome_dir()
+    galaxy.rsync_genomes(genome_dir, genomes, genome_indexes)
 
 def upload_s3(config_source):
     """Upload prepared genome files by identifier to Amazon s3 buckets.
@@ -277,7 +278,7 @@ def upload_s3(config_source):
         raise ValueError("Need to run S3 upload on a local machine")
     _check_version()
     genomes, genome_indexes, config = _get_genomes(config_source)
-    genome_indexes += DEFAULT_GENOME_INDEXES
+    genome_indexes += [x for x in DEFAULT_GENOME_INDEXES if x not in genome_indexes]
     _data_ngs_genomes(genomes, genome_indexes)
     _upload_genomes(genomes, genome_indexes)
 
@@ -426,18 +427,10 @@ def _index_to_galaxy(work_dir, ref_file, gid, genome_indexes, config):
     indexes = {}
     with cd(work_dir):
         for idx in genome_indexes:
-            indexes[idx] = INDEX_FNS[idx](ref_file)
-    for ref_index_file, cur_index, prefix, new_style, tool_name in [
-          ("sam_fa_indices.loc", indexes.get("seq", None), "index", False, 'sam'),
-          ("alignseq.loc", indexes.get("ucsc", None), "seq", False, 'alignseq'),
-          ("twobit.loc", indexes.get("ucsc", None), "", False, 'twobit'),
-          ("bowtie_indices.loc", indexes.get("bowtie", None), "", True, 'bowtie'),
-          ("mosaik_index.loc", indexes.get("mosaik", None), "", True, "mosaik"),
-          ("bwa_index.loc", indexes.get("bwa", None), "", True, 'bwa')]:
-        if cur_index:
-            str_parts = _build_galaxy_loc_line(gid, os.path.join(work_dir, cur_index),
-                                               config, prefix, new_style, tool_name)
-            _update_loc_file(ref_index_file, str_parts)
+            index_file = INDEX_FNS[idx](ref_file)
+            if index_file:
+                indexes[idx] = os.path.join(work_dir, index_file)
+    galaxy.prep_locs(gid, indexes, config)
 
 class CustomMaskManager:
     """Create a custom genome based on masking an existing genome.
@@ -446,7 +439,7 @@ class CustomMaskManager:
         assert custom.has_key("mask")
         self._custom = custom
         self.config = config
- 
+
     def download(self, seq_dir):
         base_seq = os.path.join(os.pardir, self._custom["base"],
                                 "seq", "{0}.fa".format(self._custom["base"]))
@@ -481,57 +474,6 @@ def _prep_custom_genome(custom, genomes, genome_indexes, env):
                         CustomMaskManager(custom, cur_manager.config)]],
                       genome_indexes)
 
-class LocCols(object):
-    # Hold all possible .loc file column fields making sure the local
-    # variable names match column names in Galaxy's tool_data_table_conf.xml
-    def __init__(self, config, dbkey, file_path):
-        self.dbkey = dbkey
-        self.path = file_path
-        self.value = config.get("value", dbkey)
-        self.name = config.get("name", dbkey)
-        self.species = config.get('species', '')
-        self.index = config.get('index', 'index')
-        self.formats = config.get('index', 'fastqsanger')
-        self.dbkey1 = config.get('index', dbkey)
-        self.dbkey2 = config.get('index', dbkey)
-
-def _build_galaxy_loc_line(dbkey, file_path, config, prefix, new_style, tool_name):
-    """Prepare genome information to write to a Galaxy *.loc config file.
-    """
-    if new_style:
-        str_parts = []
-        tool_conf = _get_tool_conf(tool_name)
-        loc_cols = LocCols(config, dbkey, file_path)
-        # Compose the .loc file line as str_parts list by looking for column values
-        # from the retrieved tool_conf (as defined in tool_data_table_conf.xml). 
-        # Any column values required but missing in the the tool_conf are 
-        # supplemented by the defaults defined in LocCols class
-        for col in tool_conf.get('columns', []):
-            str_parts.append(config.get(col, getattr(loc_cols, col)))
-        # print "manufact str_parts: %s" % str_parts
-        # str_parts = [loc_cols.value, dbkey, loc_cols.name, file_path]
-        # print "original str_parts: %s" % str_parts
-    else:
-        str_parts = [dbkey, file_path]
-    if prefix:
-        str_parts.insert(0, prefix)
-    return str_parts
-
-def _get_tool_conf(tool_name):
-    """
-    Parse the tool_data_table_conf.xml from installed_files subfolder and extract
-    values for the 'columns' tag and 'path' parameter for the 'file' tag, returning 
-    those as a dict.
-    """
-    tool_conf = {}
-    tdtc = ElementTree.parse(env.tool_data_table_conf_file)
-    tables = tdtc.getiterator('table')
-    for t in tables:
-        if tool_name in t.attrib.get('name', ''):
-            tool_conf['columns'] = t.find('columns').text.replace(' ', '').split(',')
-            tool_conf['file'] = t.find('file').attrib.get('path', '')
-    return tool_conf
-
 def _clean_genome_directory():
     """Remove any existing sequence information in the current directory.
     """
@@ -550,22 +492,6 @@ def _move_seq_files(ref_file, base_zips, seq_dir):
     assert exists(moved_ref), moved_ref
     return moved_ref
 
-def _update_loc_file(ref_file, line_parts):
-    """Add a reference to the given genome to the base index file.
-    """
-    if env.galaxy_base is not None:
-        tools_dir = os.path.join(env.galaxy_base, "tool-data")
-        if not exists(tools_dir):
-            run("mkdir -p %s" % tools_dir)
-            put(env.tool_data_table_conf_file,
-                os.path.join(env.galaxy_base, "tool_data_table_conf.xml"))
-        add_str = "\t".join(line_parts)
-        with cd(tools_dir):
-            if not exists(ref_file):
-                run("touch %s" % ref_file)
-            if not contains(ref_file, add_str):
-                append(ref_file, add_str)
-
 # ## Indexing for specific aligners
 
 def _index_w_command(dir_name, command, ref_file, pre=None, post=None, ext=None):
@@ -583,21 +509,6 @@ def _index_w_command(dir_name, command, ref_file, pre=None, post=None, ext=None)
             if post:
                 post(full_ref_path)
     return os.path.join(dir_name, index_name)
-
-def _index_picard(ref_file):
-    """Provide a Picard style dict index file for a reference genome.
-    """
-    index_name = "%s.dict" % os.path.splitext(ref_file)[0]
-    try:
-        picard_jar = os.path.join(env.picard_home, "CreateSequenceDictionary.jar")
-    except AttributeError:
-        picard_jar = None
-    if picard_jar and exists(picard_jar) and not exists(index_name):
-        cl = ["java", "-jar", picard_jar]
-        opts = ["%s=%s" % (x, y) for x, y in [("REFERENCE", ref_file),
-                                              ("OUTPUT", index_name)]]
-        run(" ".join(cl + opts))
-    return index_name
 
 @_if_installed("faToTwoBit")
 def _index_twobit(ref_file):
@@ -660,7 +571,7 @@ def _index_sam(ref_file):
     with cd(ref_dir):
         if not exists("%s.fai" % local_file):
             run("samtools faidx %s" % local_file)
-    _index_picard(ref_file)
+    galaxy.index_picard(ref_file)
     return ref_file
 
 @_if_installed("MosaikJump")
@@ -701,7 +612,7 @@ def _index_eland(ref_file):
     """Index for Solexa's Eland aligner.
 
     This is nasty since Eland will choke on large files like the mm9 and h18
-    genomes. It also has a restriction on only having 24 larger reference 
+    genomes. It also has a restriction on only having 24 larger reference
     files per directory. This indexes files with lots of shorter sequences (like
     xenopus) as one file, and splits up other files, removing random and other
     associated chromosomes to avoid going over the 24 file limit.
@@ -848,7 +759,7 @@ def _data_liftover(lift_over_genomes):
                         run("gunzip %s" % cur_file)
             if worked:
                 ref_parts = [g1, g2, os.path.join(lo_dir, non_zip)]
-                _update_loc_file("liftOver.loc", ref_parts)
+                galaxy.update_loc_file("liftOver.loc", ref_parts)
 
 # == UniRef
 def _data_uniref():
